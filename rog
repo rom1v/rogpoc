@@ -89,8 +89,6 @@ sign=$sign
   # payload, but it adds an indirection
   git update-ref refs/tags/"${bid}_payload" "$hash"
   git gc --prune=now --quiet
-
-  return 0
 }
 
 _resolve_tag() {
@@ -106,7 +104,6 @@ _resolve_tag() {
     return 2
   fi
   printf "$res"
-  return 0
 }
 
 create() {
@@ -185,7 +182,7 @@ delete() {
   tag="$(_resolve_tag "$tag")" || return 2
   git tag -d "$tag"
 
-  git gc --prune=now
+  git gc --prune=now --quiet
 }
 
 if [ "$#" -lt 1 ]
