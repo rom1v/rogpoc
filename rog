@@ -1,0 +1,241 @@
+#!/bin/bash
+# Rhizome over GIT PoC
+#
+# rog create <service> [<sender>] [<recipient>] [<file>]
+# rog list [<service>] [<sender>] [<recipient>]
+# rog update <bid> [<file>]
+# rog delete <bid>
+# rog manifest <bid>
+# rog payload <bid>
+
+GITREPO=store
+
+bin_to_hex() {
+  xxd -p | tr -d '\n'
+}
+
+hex_to_bin() {
+  xxd -r -p
+}
+
+timestamp() {
+  # milliseconds since epoch
+  date +%s%N | sed 's/.\{6\}$//'
+}
+
+new_bid() {
+  # TODO use the current bid generation implementation instead
+  # Currently, I use a random byte array
+  < /dev/urandom head -c32 | bin_to_hex
+}
+
+sign() {
+  # TODO use the current signature implementation instead
+  # Currently, I use a simple hash
+  sha512sum | cut -c-128
+}
+
+_store() {
+  local file="$1"
+  if [ "$file" ]
+  then
+    git hash-object -w "$file"
+  else
+    git hash-object -w --stdin
+  fi
+}
+
+_build() {
+  local bid="$1"
+  local service="$2"
+  local sender="$3"
+  local recipient="$4"
+  local file="$5"       # empty for stdin
+  # if declared local during affectation, return code is always 0
+  local hash
+
+  hash=$(_store "$file")
+  if [ $? != 0 ]
+  then
+    printf 'Cannot add file to GIT repository\n' >&2
+    return 1
+  fi
+
+  local date=$(timestamp)              # also used for version
+  local length=$(git cat-file blob "$hash" | wc -c)
+  local sign=$(printf "$bid\0$service\0$sender\0$recipient\0$date\0\
+$length\0$hash" | sign)
+
+  local mhash=$(
+    (
+      printf "bid=$bid\n"
+      printf "service=$service\n"
+      printf "sender=$sender\n"
+      printf "recipient=$recipient\n"
+      printf "date=$date\n"
+      printf "length=$length\n"
+      printf "payload=$hash\n"
+      printf "sign=$sign\n"
+    ) | git hash-object -w --stdin
+  )
+  if [ $? != 0 ]
+  then
+    printf 'Cannot add manifest to GIT repository\n' >&2
+    return 2
+  fi
+
+  git update-ref refs/tags/"${bid}_manifest" "$mhash"
+  # the payload must be referenced not to be deleted by "git gc"
+  # another way would be to create a tree containing the manifest and the
+  # payload, but it adds an indirection
+  git update-ref refs/tags/"${bid}_payload" "$hash"
+  git gc --prune=now --quiet
+
+  return 0
+}
+
+_resolve_tag() {
+  local tag="$1"
+  local res="$(git tag -l "$tag")"
+  if [ ! "$res" ]
+  then
+    printf "Unknown tag: $tag\n" >&2
+    return 1
+  elif [ "$(printf "$res\n" | wc -l)" -gt 1 ]
+  then
+    printf "More than one matching tag: $tag\n" >&2
+    return 2
+  fi
+  printf "$res"
+  return 0
+}
+
+create() {
+  local service="$1"
+  local sender="$2"
+  local recipient="$3"
+  local file="$4"
+  _build "$(new_bid)" "$service" "$sender" "$recipient" "$file"
+}
+
+update() {
+  local bid="$1"
+  local file="$2"  # '-' for stdin
+  local tag="${bid}_manifest"
+  bid="$(_resolve_tag "$tag")" || return 1
+
+  # store every manifest key=value in bash variables
+  # (awful but convenient, this is just a PoC!)
+  eval "$(git cat-file blob "$tag")"
+
+  # service, sender and recipient are evaluated by 'eval'
+  _build "$bid" "$service" "$sender" "$recipient" "$file"
+}
+
+print_manifest() {
+  local bid="$1"
+  local tag="${bid}_manifest"
+  tag="$(_resolve_tag "$tag")" || return 1
+  git cat-file blob "$tag"
+}
+
+print_payload() {
+  local bid="$1"
+  local tag="${bid}_payload"
+  tag="$(_resolve_tag "$tag")" || return 1
+  git cat-file blob "$tag"
+}
+
+list() {
+  local service="$1"
+  local sender="$2"
+  local recipient="$3"
+  git for-each-ref --format='%(objectname)' refs/tags/*_manifest |
+  while read blob
+  do
+    local manifest=$(git cat-file blob "$blob")
+    if [ "$service" ]
+    then
+      local mservice=$(printf "$manifest" | sed -n '2s/^service=//p')
+      [ "$service" = "$mservice" ] || continue
+    fi
+    if [ "$sender" ]
+    then
+      local msender=$(printf "$manifest" | sed -n '3s/^sender=//p')
+      [ "$sender" = "$msender" ] || continue
+    fi
+    if [ "$recipient" ]
+    then
+      local mrecipient=$(printf "$manifest" | sed -n '4s/^recipient=//p')
+      [ "$recipient" = "$mrecipient" ] || continue
+    fi
+    # print field values separated by ':'
+    printf "$manifest" | sed '/^sign=/d;s/.*=//' | tr '\n' ':'
+    printf '\n'
+  done
+}
+
+delete() {
+  local bid="$1"
+
+  local tag="${bid}_manifest"
+  tag="$(_resolve_tag "$tag")" || return 1
+  git tag -d "$tag"
+
+  tag="${bid}_payload"
+  tag="$(_resolve_tag "$tag")" || return 2
+  git tag -d "$tag"
+
+  git gc --prune=now
+}
+
+if [ "$#" -lt 1 ]
+then
+  printf 'Syntax:\n'
+  printf "  $0 create <service> [<sender>] [<recipient>] [<file>]\n" >&2
+  printf "  $0 list [<service>] [<sender>] [<recipient>]\n" >&2
+  printf "  $0 update <bid> [<file>]\n" >&2
+  printf "  $0 delete <bid>\n" >&2
+  printf "  $0 manifest <bid>\n" >&2
+  printf "  $0 payload <bid>\n" >&2
+  exit 1
+fi
+
+# init the repository
+[ -d "$GITREPO" ] || git init -q --bare "$GITREPO"
+
+# move into it
+OLDPWD="$PWD"
+cd "$GITREPO"
+
+cmd="$1"
+shift
+
+case "$cmd" in
+  create)
+    create "$@"
+    ret=$? ;;
+  update)
+    update "$@"
+    ret=$? ;;
+  list)
+    list "$@"
+    ret=$? ;;
+  delete)
+    delete "$@"
+    ret=$? ;;
+  manifest)
+    print_manifest "$@"
+    ret=$? ;;
+  payload)
+    print_payload "$@"
+    ret=$? ;;
+  *)
+    printf "Unknown command: $cmd\n" >&2
+    ret=1 ;;
+esac
+
+# restore the PWD
+cd "$OLDPWD"
+
+exit $ret
