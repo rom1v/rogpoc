@@ -1,3 +1,7 @@
+See [Rhizome over git topic][topic].
+
+[topic]: https://groups.google.com/forum/#!topic/serval-project-developers/D4Vt7nBd_7A
+
 I am exploring the possibility to implement the Rhizome store (from Serval
 Project) over GIT. This PoC is a wrapper of GIT plumbing commands to provide
 Rhizome main commands.
