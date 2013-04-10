@@ -187,13 +187,15 @@ delete() {
 
 if [ "$#" -lt 1 ]
 then
-  printf 'Syntax:\n'
-  printf "  $0 create <service> [<sender>] [<recipient>] [<file>]\n" >&2
-  printf "  $0 list [<service>] [<sender>] [<recipient>]\n" >&2
-  printf "  $0 update <bid> [<file>]\n" >&2
-  printf "  $0 delete <bid>\n" >&2
-  printf "  $0 manifest <bid>\n" >&2
-  printf "  $0 payload <bid>\n" >&2
+  << - cat >&2
+Syntax:
+  $0 create <service> [<sender>] [<recipient>] [<file>]
+  $0 list [<service>] [<sender>] [<recipient>]
+  $0 update <bid> [<file>]
+  $0 delete <bid>
+  $0 manifest <bid>
+  $0 payload <bid>
+-
   exit 1
 fi
 
