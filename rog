@@ -66,17 +66,16 @@ _build() {
   local sign=$(printf "$bid\0$service\0$sender\0$recipient\0$date\0\
 $length\0$hash" | sign)
 
-  local mhash=$(
-    (
-      printf "bid=$bid\n"
-      printf "service=$service\n"
-      printf "sender=$sender\n"
-      printf "recipient=$recipient\n"
-      printf "date=$date\n"
-      printf "length=$length\n"
-      printf "payload=$hash\n"
-      printf "sign=$sign\n"
-    ) | git hash-object -w --stdin
+  local mhash=$(<< - git hash-object -w --stdin
+bid=$bid
+service=$service
+sender=$sender
+recipient=$recipient
+date=$date
+length=$length
+payload=$hash
+sign=$sign
+-
   )
   if [ $? != 0 ]
   then
