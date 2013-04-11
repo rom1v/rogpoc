@@ -146,7 +146,7 @@ list() {
   local service="$1"
   local sender="$2"
   local recipient="$3"
-  git for-each-ref --format='%(objectname)' refs/tags/*_manifest |
+  git for-each-ref --format='%(objectname)' 'refs/tags/*_manifest' |
   while read blob
   do
     local manifest=$(git cat-file blob "$blob")
